@@ -104,6 +104,11 @@
       header.topbar{ grid-template-columns:1fr; }
       .headline{ text-align:left; }
     }
+
+    .topbar-actions{
+      display:flex;
+      justify-content:flex-end;
+    }
   </style>
 </head>
 <body>
@@ -113,11 +118,13 @@
     </div>
     <div class="headline">
       <div class="headline-line">
-        <span class="title">Jewells DC Stock Report</span>
+        <span class="title">Jewells DC Stock Report (PoC)</span>
         <span class="sub" id="generatedAt">Loading…</span>
       </div>
     </div>
-    <div></div>
+    <div class="topbar-actions">
+      <button class="btn" id="refreshBtn" type="button">Refresh</button>
+    </div>
   </header>
 
   <div class="wrap">
@@ -160,7 +167,7 @@
           <button class="btn" id="btnReset">Reset</button>
         </div>
         <div>
-          <button class="btn export" id="btnExport">Export CSV</button>
+          <button class="btn export" id="exportBtn" type="button">Export CSV</button>
         </div>
       </div>
       <div class="hint">Source: Cloudflare Worker <span class="mono">/dc-stock-report</span></div>

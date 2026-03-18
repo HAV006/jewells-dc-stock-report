@@ -267,6 +267,16 @@ function bindEvents(){
 
   el("exportBtn").addEventListener("click", exportCsv);
   el("refreshBtn").addEventListener("click", loadData);
+
+  el("btnApply").addEventListener("click", applyFilters);
+
+  el("btnReset").addEventListener("click", () => {
+    el("q").value = "";
+    el("missingOnly").value = "all";
+    el("sortBy").value = "sku";
+    page = 1;
+    applyFilters();
+  });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
