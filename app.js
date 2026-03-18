@@ -139,10 +139,7 @@ function renderTable(){
           <td class="num">${fmtGBP(r.LPUnitCostGBP)}</td>
           <td class="num">${fmtGBP(r.InventoryValueSOH)}</td>
           <td class="num">${fmtGBP(r.InventoryValueAvailInv)}</td>
-          <td>${escapeHtml(r.CostSource)}</td>
           <td class="center"><span class="flag ${costClass}">${costText}</span></td>
-          <td>${escapeHtml(r.LPBusinessDate)}</td>
-          <td>${escapeHtml(r.LPGeneratedAt)}</td>
         </tr>
       `;
     }).join("");
