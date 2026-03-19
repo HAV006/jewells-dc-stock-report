@@ -27,6 +27,20 @@ function fmtNum(x, digits = 0){
   });
 }
 
+function fmtSignedNum(x){
+  const n = Number(x || 0);
+  const abs = fmtNum(Math.abs(n));
+  if (n > 0) return `+${abs}`;
+  if (n < 0) return `-${abs}`;
+  return abs;
+}
+
+function fmtPct(x, digits = 1){
+  if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
+  const n = Number(x || 0);
+  return `${n.toLocaleString("en-GB", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+}
+
 function escapeHtml(v){
   return String(v ?? "")
     .replaceAll("&", "&amp;")
@@ -36,64 +50,199 @@ function escapeHtml(v){
     .replaceAll("'", "&#39;");
 }
 
+function readNumber(source, keys, defaultValue = 0){
+  for (const key of keys){
+    if (source[key] !== undefined && source[key] !== null && source[key] !== ""){
+      const n = Number(source[key]);
+      return Number.isFinite(n) ? n : defaultValue;
+    }
+  }
+  return defaultValue;
+}
+
+function hasAnyField(source, keys){
+  return keys.some((key) => source[key] !== undefined && source[key] !== null && source[key] !== "");
+}
+
+function discrepancyBucket(soh, lp){
+  if (soh === lp) return "match";
+  if (soh > 0 && lp === 0) return "soh_only";
+  if (soh === 0 && lp > 0) return "lp_only";
+  if (soh > lp) return "soh_above";
+  return "soh_below";
+}
+
+function statusLabel(bucket){
+  switch (bucket){
+    case "match": return "Match";
+    case "soh_above": return "SOH > LP";
+    case "soh_below": return "SOH < LP";
+    case "soh_only": return "SOH only";
+    case "lp_only": return "LP only";
+    default: return "Unknown";
+  }
+}
+
 function normalizeData(payload){
   const data = payload?.data || [];
 
-  return data.map((r) => ({
-    Warehouse: String(r.Warehouse ?? r.warehouse ?? ""),
-    WarehouseLabel: String(r.WarehouseLabel ?? r.warehouselabel ?? ""),
-    SKU: String(r.SKU ?? r.sku ?? "").trim(),
-    SOH: Number(r.SOH ?? r.soh ?? 0),
-    DELTA: Number(r.DELTA ?? r.delta ?? 0),
-    AVAIL_INV: Number(r.AVAIL_INV ?? r.avail_inv ?? 0),
-    LPUnitCostGBP: Number(r.LPUnitCostGBP ?? r.lpunitcostgbp ?? 0),
-    InventoryValueSOH: Number(r.InventoryValueSOH ?? r.inventoryvaluesoh ?? 0),
-    InventoryValueAvailInv: Number(r.InventoryValueAvailInv ?? r.inventoryvalueavailinv ?? 0),
-    // CostSource: String(r.CostSource ?? r.costsource ?? ""),
-    CostMissingFlag: Boolean(r.CostMissingFlag ?? r.costmissingflag ?? false),
-    // LPBusinessDate: String(r.LPBusinessDate ?? r.lpbusinessdate ?? ""),
-    // LPGeneratedAt: String(r.LPGeneratedAt ?? r.lpgeneratedat ?? ""),
-    // LPRemoteFilename: String(r.LPRemoteFilename ?? r.lpremotefilename ?? ""),
-    ProductImageFile: String(r.ProductImageFile ?? r.productimagefile ?? "logo-red.png"),
-    ProductImageUrl: String(r.ProductImageUrl ?? r.productimageurl ?? DEFAULT_PRODUCT_IMAGE_URL),
-    ProductImageMatchType: String(r.ProductImageMatchType ?? r.productimagematchtype ?? "fallback"),
-    CatalogUrl: String(r.CatalogUrl ?? r.catalogurl ?? ""),
-  }));
+  return data.map((r) => {
+    const soh = readNumber(r, ["SOH", "soh"]);
+    const lpdc = readNumber(r, ["GLDCTotal", "GL_DC_TOTAL", "GL_DC_Total", "gl_dc_total", "gldctotal"]);
+    const unitCost = readNumber(r, ["LPUnitCostGBP", "lpunitcostgbp", "PP", "pp"]);
+    const invValueSOH = hasAnyField(r, ["InventoryValueSOH", "inventoryvaluesoh"])
+      ? readNumber(r, ["InventoryValueSOH", "inventoryvaluesoh"])
+      : soh * unitCost;
+    const invValueLP = hasAnyField(r, ["InventoryValueGLDC", "inventoryvaluegldc", "InventoryValueLP", "inventoryvaluelp"])
+      ? readNumber(r, ["InventoryValueGLDC", "inventoryvaluegldc", "InventoryValueLP", "inventoryvaluelp"])
+      : lpdc * unitCost;
+
+    const bucket = discrepancyBucket(soh, lpdc);
+    const qtyGap = soh - lpdc;
+    const pctGap = lpdc > 0 ? (qtyGap / lpdc) * 100 : (soh > 0 ? 100 : 0);
+
+    return {
+      Warehouse: String(r.Warehouse ?? r.warehouse ?? ""),
+      WarehouseLabel: String(r.WarehouseLabel ?? r.warehouselabel ?? ""),
+      SKU: String(r.SKU ?? r.sku ?? "").trim(),
+      SOH: soh,
+      GLDCTotal: lpdc,
+      DELTA: readNumber(r, ["DELTA", "delta"]),
+      LPUnitCostGBP: unitCost,
+      InventoryValueSOH: invValueSOH,
+      InventoryValueLP: invValueLP,
+      QtyGap: qtyGap,
+      GapPct: pctGap,
+      DiscrepancyBucket: bucket,
+      CostMissingFlag: Boolean(r.CostMissingFlag ?? r.costmissingflag ?? false),
+      ProductImageFile: String(r.ProductImageFile ?? r.productimagefile ?? "logo-red.png"),
+      ProductImageUrl: String(r.ProductImageUrl ?? r.productimageurl ?? DEFAULT_PRODUCT_IMAGE_URL),
+      ProductImageMatchType: String(r.ProductImageMatchType ?? r.productimagematchtype ?? "fallback"),
+      CatalogUrl: String(r.CatalogUrl ?? r.catalogurl ?? ""),
+      HasLPDC: hasAnyField(r, ["GLDCTotal", "GL_DC_TOTAL", "GL_DC_Total", "gl_dc_total", "gldctotal"]),
+    };
+  });
+}
+
+function summarize(data){
+  const totalSOH = data.reduce((a, r) => a + Number(r.SOH || 0), 0);
+  const totalLPDC = data.reduce((a, r) => a + Number(r.GLDCTotal || 0), 0);
+  const totalValueSOH = data.reduce((a, r) => a + Number(r.InventoryValueSOH || 0), 0);
+  const totalValueLP = data.reduce((a, r) => a + Number(r.InventoryValueLP || 0), 0);
+  const gapQty = totalSOH - totalLPDC;
+  const gapValue = totalValueSOH - totalValueLP;
+  const discrepancyCount = data.filter(r => r.DiscrepancyBucket !== "match").length;
+  const missing = data.filter(r => r.CostMissingFlag).length;
+  const matchCount = data.filter(r => r.DiscrepancyBucket === "match").length;
+  const sohAboveCount = data.filter(r => r.DiscrepancyBucket === "soh_above").length;
+  const sohBelowCount = data.filter(r => r.DiscrepancyBucket === "soh_below").length;
+  const sohOnlyCount = data.filter(r => r.DiscrepancyBucket === "soh_only").length;
+  const lpOnlyCount = data.filter(r => r.DiscrepancyBucket === "lp_only").length;
+  return {
+    totalSOH,
+    totalLPDC,
+    totalValueSOH,
+    totalValueLP,
+    gapQty,
+    gapPct: totalLPDC > 0 ? (gapQty / totalLPDC) * 100 : (totalSOH > 0 ? 100 : 0),
+    gapValue,
+    discrepancyCount,
+    missing,
+    matchCount,
+    sohAboveCount,
+    sohBelowCount,
+    sohOnlyCount,
+    lpOnlyCount,
+    matchRate: data.length ? (matchCount / data.length) * 100 : 0,
+    hasLPDC: data.some(r => r.HasLPDC),
+  };
+}
+
+function applyValueClass(node, value){
+  node.classList.remove("warm", "cool", "good");
+  if (value > 0) node.classList.add("warm");
+  else if (value < 0) node.classList.add("cool");
+  else node.classList.add("good");
 }
 
 function updateKpis(data){
-  const totalSOH = data.reduce((a, r) => a + Number(r.SOH || 0), 0);
-  const totalAvail = data.reduce((a, r) => a + Number(r.AVAIL_INV || 0), 0);
-  const totalValueSOH = data.reduce((a, r) => a + Number(r.InventoryValueSOH || 0), 0);
-  const totalValueAvail = data.reduce((a, r) => a + Number(r.InventoryValueAvailInv || 0), 0);
-  const missing = data.filter(r => r.CostMissingFlag).length;
+  const s = summarize(data);
 
   el("kpiRows").textContent = fmtNum(data.length);
-  el("kpiSOH").textContent = fmtNum(totalSOH);
-  el("kpiAvail").textContent = fmtNum(totalAvail);
-  el("kpiValueSOH").textContent = fmtGBP(totalValueSOH);
-  el("kpiValueAvail").textContent = fmtGBP(totalValueAvail);
-  el("kpiMissing").textContent = fmtNum(missing);
+  el("kpiSOH").textContent = fmtNum(s.totalSOH);
+  el("kpiValueSOH").textContent = fmtGBP(s.totalValueSOH);
+  el("kpiMissing").textContent = fmtNum(s.missing);
+
+  el("kpiLPDC").textContent = s.hasLPDC ? fmtNum(s.totalLPDC) : "—";
+  el("kpiGapQty").textContent = s.hasLPDC ? fmtSignedNum(s.gapQty) : "—";
+  el("kpiGapPct").textContent = s.hasLPDC ? fmtPct(s.gapPct) : "—";
+  el("kpiValueLP").textContent = s.hasLPDC ? fmtGBP(s.totalValueLP) : "—";
+  el("kpiGapValue").textContent = s.hasLPDC ? fmtGBP(s.gapValue) : "—";
+  el("kpiDiscrepancies").textContent = s.hasLPDC ? fmtNum(s.discrepancyCount) : "—";
+  el("kpiMatchRate").textContent = s.hasLPDC ? `Match rate ${fmtPct(s.matchRate)}` : "Waiting for LP fields";
+
+  if (s.hasLPDC){
+    applyValueClass(el("kpiGapQty"), s.gapQty);
+    applyValueClass(el("kpiGapPct"), s.gapPct);
+    applyValueClass(el("kpiGapValue"), s.gapValue);
+  }
+
+  const summaryHeadline = el("summaryHeadline");
+  const summarySubcopy = el("summarySubcopy");
+  const summaryChips = el("summaryChips");
+
+  if (!s.hasLPDC){
+    summaryHeadline.textContent = `SOH total ${fmtNum(s.totalSOH)} units across ${fmtNum(data.length)} SKUs.`;
+    summarySubcopy.textContent = "LP reconciliation fields are not available yet in the API response.";
+    summaryChips.innerHTML = `<span class="chip">SOH primary view active</span><span class="chip">LP comparison pending payload update</span>`;
+  } else {
+    const direction = s.gapQty >= 0 ? "above" : "below";
+    summaryHeadline.textContent = `SOH total ${fmtNum(s.totalSOH)} units. LP DC total ${fmtNum(s.totalLPDC)} units.`;
+    summarySubcopy.textContent = `SOH is ${direction} LP by ${fmtSignedNum(s.gapQty)} units (${fmtPct(Math.abs(s.gapPct))}). ${fmtNum(s.discrepancyCount)} SKUs show a discrepancy.`;
+    summaryChips.innerHTML = `
+      <span class="chip">${fmtNum(s.matchCount)} match</span>
+      <span class="chip">${fmtNum(s.sohAboveCount)} SOH &gt; LP</span>
+      <span class="chip">${fmtNum(s.sohBelowCount)} SOH &lt; LP</span>
+      <span class="chip">${fmtNum(s.sohOnlyCount)} SOH only</span>
+      <span class="chip">${fmtNum(s.lpOnlyCount)} LP only</span>
+    `;
+  }
+
+  el("contractWarning").hidden = s.hasLPDC;
 }
 
 function applyFilters(){
   const q = (el("q").value || "").trim().toLowerCase();
-  const missingOnly = el("missingOnly").value;
+  const statusOnly = el("statusOnly").value;
+  const costOnly = el("costOnly").value;
   const sortBy = el("sortBy").value;
+  const discrepanciesOnly = el("discrepanciesOnly").checked;
 
-  filtered = rows.filter(r => {
-    const matchesQ = !q || r.SKU.toLowerCase().includes(q) || r.Warehouse.toLowerCase().includes(q);
-    const matchesMissing =
-      missingOnly === "all" ? true :
-      missingOnly === "missing" ? r.CostMissingFlag :
-      !r.CostMissingFlag;
-    return matchesQ && matchesMissing;
+  filtered = rows.filter((r) => {
+    const matchesQ = !q ||
+      r.SKU.toLowerCase().includes(q) ||
+      r.Warehouse.toLowerCase().includes(q) ||
+      statusLabel(r.DiscrepancyBucket).toLowerCase().includes(q);
+
+    const matchesStatus = statusOnly === "all" ? true : r.DiscrepancyBucket === statusOnly;
+    const matchesCost = costOnly === "all" ? true : costOnly === "missing" ? r.CostMissingFlag : !r.CostMissingFlag;
+    const matchesDiscrepancy = discrepanciesOnly ? r.DiscrepancyBucket !== "match" : true;
+
+    return matchesQ && matchesStatus && matchesCost && matchesDiscrepancy;
   });
 
   filtered.sort((a, b) => {
     if (sortBy === "soh_desc") return Number(b.SOH || 0) - Number(a.SOH || 0) || a.SKU.localeCompare(b.SKU);
-    if (sortBy === "avail_desc") return Number(b.AVAIL_INV || 0) - Number(a.AVAIL_INV || 0) || a.SKU.localeCompare(b.SKU);
-    if (sortBy === "value_desc") return Number(b.InventoryValueAvailInv || 0) - Number(a.InventoryValueAvailInv || 0) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "lpdc_desc") return Number(b.GLDCTotal || 0) - Number(a.GLDCTotal || 0) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "gap_abs_desc") return Math.abs(b.QtyGap) - Math.abs(a.QtyGap) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "gap_desc") return Number(b.QtyGap || 0) - Number(a.QtyGap || 0) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "gap_asc") return Number(a.QtyGap || 0) - Number(b.QtyGap || 0) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "value_soh_desc") return Number(b.InventoryValueSOH || 0) - Number(a.InventoryValueSOH || 0) || a.SKU.localeCompare(b.SKU);
+    if (sortBy === "value_gap_desc") {
+      const aValueGap = Number(a.InventoryValueSOH || 0) - Number(a.InventoryValueLP || 0);
+      const bValueGap = Number(b.InventoryValueSOH || 0) - Number(b.InventoryValueLP || 0);
+      return Math.abs(bValueGap) - Math.abs(aValueGap) || a.SKU.localeCompare(b.SKU);
+    }
     return a.SKU.localeCompare(b.SKU);
   });
 
@@ -121,12 +270,18 @@ function renderTable(){
     tableWrap.hidden = false;
     empty.hidden = true;
 
-    tbody.innerHTML = pageRows.map(r => {
+    tbody.innerHTML = pageRows.map((r) => {
       const img = escapeHtml(r.ProductImageUrl || DEFAULT_PRODUCT_IMAGE_URL);
       const sku = escapeHtml(r.SKU);
       const catalogUrl = escapeHtml(r.CatalogUrl || "#");
       const costClass = r.CostMissingFlag ? "bad" : "ok";
       const costText = r.CostMissingFlag ? "Yes" : "No";
+      const bucketClass = r.DiscrepancyBucket.replaceAll("_", "-");
+      const bucketText = statusLabel(r.DiscrepancyBucket);
+      const gapClass = r.QtyGap > 0 ? "txt-warm" : r.QtyGap < 0 ? "txt-cool" : "txt-neutral";
+      const gapPct = r.HasLPDC ? fmtPct(r.GapPct) : "—";
+      const lpdc = r.HasLPDC ? fmtNum(r.GLDCTotal) : "—";
+      const invValueLP = r.HasLPDC ? fmtGBP(r.InventoryValueLP) : "—";
 
       return `
         <tr>
@@ -134,11 +289,13 @@ function renderTable(){
           <td>${escapeHtml(r.Warehouse)}</td>
           <td><a class="sku-link mono" href="${catalogUrl}" target="_blank" rel="noreferrer">${sku}</a></td>
           <td class="num">${fmtNum(r.SOH)}</td>
-          <td class="num">${fmtNum(r.DELTA)}</td>
-          <td class="num">${fmtNum(r.AVAIL_INV)}</td>
+          <td class="num">${lpdc}</td>
+          <td class="num ${gapClass}">${r.HasLPDC ? fmtSignedNum(r.QtyGap) : "—"}</td>
+          <td class="num ${gapClass}">${gapPct}</td>
           <td class="num">${fmtGBP(r.LPUnitCostGBP)}</td>
           <td class="num">${fmtGBP(r.InventoryValueSOH)}</td>
-          <td class="num">${fmtGBP(r.InventoryValueAvailInv)}</td>
+          <td class="num">${invValueLP}</td>
+          <td class="center"><span class="tag ${bucketClass}">${bucketText}</span></td>
           <td class="center"><span class="flag ${costClass}">${costText}</span></td>
         </tr>
       `;
@@ -181,29 +338,28 @@ function exportCsv(){
     return;
   }
 
-  const data = filtered.map(r => ({
+  const data = filtered.map((r) => ({
     Warehouse: r.Warehouse,
     SKU: r.SKU,
     CatalogUrl: r.CatalogUrl,
     SOH: r.SOH,
-    DELTA: r.DELTA,
-    AVAIL_INV: r.AVAIL_INV,
+    GLDCTotal: r.GLDCTotal,
+    QtyGap: r.QtyGap,
+    GapPct: r.GapPct,
     LPUnitCostGBP: r.LPUnitCostGBP,
     InventoryValueSOH: r.InventoryValueSOH,
-    InventoryValueAvailInv: r.InventoryValueAvailInv,
-    // CostSource: r.CostSource,
+    InventoryValueLP: r.InventoryValueLP,
+    DiscrepancyBucket: r.DiscrepancyBucket,
     CostMissingFlag: r.CostMissingFlag,
-    // LPBusinessDate: r.LPBusinessDate,
-    // LPGeneratedAt: r.LPGeneratedAt,
   }));
 
   const headers = Object.keys(data[0]);
   const lines = ["sep=,", headers.join(",")];
   for (const row of data){
-    lines.push(headers.map(h => csvEscape(row[h])).join(","));
+    lines.push(headers.map((h) => csvEscape(row[h])).join(","));
   }
   const csv = "\ufeff" + lines.join("\n");
-  downloadBlob(`dc_stock_report_${nowStamp()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  downloadBlob(`dc_stock_report_soh_primary_${nowStamp()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
 }
 
 async function loadData(){
@@ -238,8 +394,10 @@ async function loadData(){
 
 function bindEvents(){
   el("q").addEventListener("input", applyFilters);
-  el("missingOnly").addEventListener("change", applyFilters);
+  el("statusOnly").addEventListener("change", applyFilters);
+  el("costOnly").addEventListener("change", applyFilters);
   el("sortBy").addEventListener("change", applyFilters);
+  el("discrepanciesOnly").addEventListener("change", applyFilters);
 
   el("pageSize").addEventListener("change", () => {
     pageSize = Number(el("pageSize").value || 100);
@@ -264,13 +422,13 @@ function bindEvents(){
 
   el("exportBtn").addEventListener("click", exportCsv);
   el("refreshBtn").addEventListener("click", loadData);
-
   el("btnApply").addEventListener("click", applyFilters);
-
   el("btnReset").addEventListener("click", () => {
     el("q").value = "";
-    el("missingOnly").value = "all";
+    el("statusOnly").value = "all";
+    el("costOnly").value = "all";
     el("sortBy").value = "sku";
+    el("discrepanciesOnly").checked = false;
     page = 1;
     applyFilters();
   });
