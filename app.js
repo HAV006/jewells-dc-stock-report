@@ -377,9 +377,19 @@ async function loadData(){
     rows = normalizeData(raw);
     filtered = [...rows];
 
-    el("generatedAt").textContent = raw?.generated_at_utc
-      ? `Generated at ${raw.generated_at_utc}`
-      : `Rows ${fmtNum(rows.length)}`;
+    const updatedAt = raw?.updated_at_utc || raw?.updated_at || raw?.worker_updated_at_utc || raw?.last_updated_at_utc || raw?.kv_updated_at_utc || null;
+    const executedAt = raw?.execution_completed_at_utc || raw?.executed_at_utc || raw?.run_completed_at_utc || raw?.generated_at_utc || null;
+
+    let timestampLabel = `Rows ${fmtNum(rows.length)}`;
+    if (updatedAt && executedAt){
+      timestampLabel = `Updated at ${updatedAt} · Executed at ${executedAt}`;
+    } else if (updatedAt){
+      timestampLabel = `Updated at ${updatedAt}`;
+    } else if (executedAt){
+      timestampLabel = `Executed at ${executedAt}`;
+    }
+
+    el("reportTimestamps").textContent = timestampLabel;
 
     updateKpis(filtered);
     renderTable();
