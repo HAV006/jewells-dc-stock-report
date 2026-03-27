@@ -135,6 +135,22 @@
     .inline-check input{ min-width:auto; margin:0; }
     .hint{ font-size:12px; color:var(--muted); }
 
+    .filter-actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      margin-top:20px;
+      flex-wrap:wrap;
+    }
+
+    .filter-actions .inline-check{
+      margin:0;
+    }
+
+    .filter-actions .btn{
+      margin:0;
+    }
+
     .warning{
       margin:0 4px 12px;
       padding:12px 14px;
@@ -285,13 +301,15 @@
             <option value="value_gap_desc">Abs value gap (desc)</option>
           </select>
         </div>
-        <label class="inline-check">
-          <input id="discrepanciesOnly" type="checkbox" />
-          <span>Show only discrepancies</span>
-        </label>
-        <div><button class="btn" id="btnApply" type="button">Apply</button></div>
-        <div><button class="btn" id="btnReset" type="button">Reset</button></div>
-        <div><button class="btn export" id="exportBtn" type="button">Export CSV</button></div>
+        <div class="filter-actions">
+          <label class="inline-check">
+            <input id="discrepanciesOnly" type="checkbox" />
+            <span>Show only discrepancies</span>
+          </label>
+          <button class="btn" id="btnApply" type="button">Apply</button>
+          <button class="btn" id="btnReset" type="button">Reset</button>
+          <button class="btn export" id="exportBtn" type="button">Export CSV</button>
+        </div>
       </div>
       <div class="hint">Source: Futura (Remira GB)</div>
     </div>
